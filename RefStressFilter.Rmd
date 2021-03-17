@@ -1,0 +1,564 @@
+---
+title: "Ref/Stress Bug Sites Wide Filter"
+author: "Jason Hill"
+date: "`r Sys.Date()`"
+output: html_document
+
+---
+
+```{r setup, include=FALSE, message = FALSE, warning = FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+```
+
+```{r message = FALSE, warning = FALSE}
+library(readxl)
+library(tidyverse)
+library(tidyr)
+library(DT)
+library(sf)
+library(inlmisc)
+library(leaflet)
+
+# Set working directory
+
+setwd('C:/Users/ktq89598/Desktop/FishBugIBI/Data/RefStressFilters')
+```
+
+
+# Overview
+
+This script was built using R 4.0.2 (Taking Off Again). 
+
+This tool filters reference and stress sites from Virginia and West Virginia EDAS databases, in this script we cast a "wide net" net on all the data (n=5292). This initial filter looks at 6 stress parameters that were available for the most sites in the database(s). 
+
+This is just step one of two step process, VDEQ and WVDEP biologists will review the results and help refine the reference and stress sites based on their site specific knowledge. WV DEP data was collected between 1999-2017, VDEQ data collections occurred from 2008-2020, but the majority was collected between 2012-2019.
+
+Below is a breakdown of the sites that were available:
+
+    + Total Sites Filtered = 5,292
+    + VDEQ Sites = 3,279
+    + WVDEP Sites = 2,013
+    + Coastal Bioregion = 334
+    + Piedmont Bioregion = 1,723
+    + Mountain = 3,235
+
+
+Least Disturbed (Ref) Filter Parameters:
+
+1.	DO >8 mg/L
+2.	pH >6,<9
+3.	Sp Cond < 250 uS/cm
+4.	TN <= 1 mg/L
+5.	TP <= 0.02 mg/L
+6.	Total Habitat > 150
+
+Sites are assigned R1, R2, R3, or R4 based on the number parameters the site meets.
+
+* R1 = Great meets all ref criteria (6) 
+* R2 = Good meets most and of the ref criteria (5)
+* R3 = OK meets (4) ref criteria  
+* R4 = Sites with very few ref conditions (1-3)
+
+Stress Filters Parameters
+
+1.	DO < 7 mg/L
+2.	pH <6,>9
+3.	Sp Cond > 500 uS/cm
+4.	TN >= 2 mg/L
+5.	TP >= 0.05 mg/L
+6.	Total Habitat <= 120
+
+Sites are assigned S1, S2, or S3 based on the number parameters the site meets.
+
+* S1 = Most disturbed sites, exceeded multiple stress filters (3+) 
+* S2 = Moderately stress sites, exceeded one or two stress filters (1-2) 
+* S3 = Counts sites with 0 Stress Parameters
+
+********
+# Results
+
+The first step of the process is to load all the sites and stress parameters into R. You can look at the first few rows below, note their are 17 columns at this point in the process. 
+
+```{r, warning=FALSE, allRef.1}
+# Load data
+RefStressData <- read_excel('data/All_VDEQ_Data.xlsx', sheet='FinalDataForFilter')
+
+# No filtering needed on this sheet, but going with "Select" so no recoding
+RefStressDataSelect <- RefStressData
+
+datatable(RefStressDataSelect, rownames = F, escape= F, extensions = 'Buttons',
+                options = list(dom = 'Bift', scrollX= TRUE, scrollY = '300px',
+                               pageLength = nrow(RefStressDataSelect), buttons=list('copy','colvis', 'excel')))
+
+#head(RefStressDataSelect)
+```
+
+After loading the biology sites with stressor paramaters, we then assign the sites a "Ref", "Stress", or "Fair" status based on each filter parameter as described in the overview. As an example, if a site has a Total Habitat score of 132 is would receive an assignment of "Fair", it would need to score 150 or higher for "Ref" or 120 or lower to be "Stress". After assigning all 5000+ sites a stress category for each parameter, the script counts the number of "Ref", "Stress", or "Fair" for each site. After counting each assignment, the sites receive the S1,S2,S3 or R1,R2,R3,R4 designations. See the first few sites in the table below, you can see the columns have expanded to 36 columns. 
+
+```{r, warning=FALSE, allRef.2}
+# Create Dataframe with Stress, Ref and Fair Labeled
+RefStressDataSelect$TotHabStress <- cut(RefStressDataSelect$TotHab, c(0,120,150,200), labels=c('Stress','Fair','Ref'))
+RefStressDataSelect$TNStress <- cut(RefStressDataSelect$TN, c(0,1,2,100), labels=c('Ref','Fair','Stress'))
+RefStressDataSelect$TPStress <- cut(RefStressDataSelect$TP, c(0,0.02,0.05,100), labels=c('Ref','Fair','Stress'))
+RefStressDataSelect$DOStress <- cut(RefStressDataSelect$DO, c(0,7,8,100), labels=c('Stress','Fair','Ref'))
+RefStressDataSelect$PHStress <- cut(RefStressDataSelect$pH, c(0,6,9,100), labels=c('Fair','Ref','Fair2'))
+RefStressDataSelect$SpCondStress <- cut(RefStressDataSelect$SpCond, c(0,250,500,100000), labels=c('Ref','Fair','Stress'))
+
+
+RefStressDataSelect$CountStress <- rowSums(RefStressDataSelect == 'Stress', na.rm=TRUE) #Counts number of sites with Stress values
+
+RefStressDataSelect$CountRef <- rowSums(RefStressDataSelect == 'Ref', na.rm=TRUE) #Counts number of sites with Ref values
+
+RefStressDataSelect$CountFair1 <- rowSums(RefStressDataSelect == 'Fair', na.rm=TRUE) #Counts number of sites with Fair values
+
+RefStressDataSelect$CountFair2 <- rowSums(RefStressDataSelect == 'Fair2', na.rm=TRUE) #Counts number of sites with Fair values
+
+RefStressDataSelect$CountFair <-RefStressDataSelect$CountFair1 + RefStressDataSelect$CountFair2 #Add Sites with Fair(s) together
+
+RefStressDataSelect <-within(RefStressDataSelect, rm(CountFair1, CountFair2)) #removes interm fair counts from dataframe to be tidy!
+#within(df, rm(x, y))
+
+RefStressDataSelect$CountFilterParms <- RefStressDataSelect$CountRef + RefStressDataSelect$CountStress + RefStressDataSelect$CountFair
+
+
+###Label Stress and Ref Condition
+RefStressDataSelect$StressLevel <- cut(RefStressDataSelect$CountStress, c(-1,-0.5,0.5,2.5,20), labels=c('S4','S3','S2','S1'))
+RefStressDataSelect$RefLevel <- cut(RefStressDataSelect$CountRef, c(0,3,4,5,20), labels=c('R4','R3','R2','R1'))
+
+#Select Stress and Ref Level
+RefStressDataSelect$S1 <- rowSums(RefStressDataSelect == 'S1', na.rm=TRUE) #Counts number of sites with S1 (highest stressor count 3+) 
+RefStressDataSelect$S2 <- rowSums(RefStressDataSelect == 'S2', na.rm=TRUE) #Counts number of sites with S2 (high stressor count 1-2)
+RefStressDataSelect$S3 <- rowSums(RefStressDataSelect == 'S3', na.rm=TRUE) #Counts number of sites with S3 (0 stressor count)
+
+RefStressDataSelect$R1 <- rowSums(RefStressDataSelect == 'R1', na.rm=TRUE) #Counts number of sites with R1 (high ref count All 6)
+RefStressDataSelect$R2 <- rowSums(RefStressDataSelect == 'R2', na.rm=TRUE) #Counts number of sites with R2 (high ref count 5 of 6
+RefStressDataSelect$R3 <- rowSums(RefStressDataSelect == 'R3', na.rm=TRUE) #Counts number of sites with R3 (medium ref count 4)
+RefStressDataSelect$R4 <- rowSums(RefStressDataSelect == 'R4', na.rm=TRUE) #Counts number of sites with R4 (low ref count 0-3)
+
+datatable(RefStressDataSelect, rownames = F, escape= F, extensions = 'Buttons',
+                options = list(dom = 'Bift', scrollX= TRUE, scrollY = '300px',
+                               pageLength = nrow(RefStressDataSelect), buttons=list('copy','colvis', 'excel')))
+
+#head(RefStressDataSelect)
+```
+
+The next step of the process is to combine the reference and stress count together to find the sites with the highest stress and least stress. As an example, I combine sites with 3 stress or more (S1 sites) and sites with 1-3 reference filter (R4 sites). By adding sites that are S1 and R4, I am looking for sites that have a lot of disturbance and very few reference like qualities. These sites are then labeled "Highest Stress". By combining sites with no stress S3 and sites the meet all reference filters R1, I find the sites with the least disturbance, they are assigned "BestRef". I repeat combinations of the reference and stress results until all sites receive one of the eight categories. You can see that we now have 61 columns in the table.   
+
+```{r, warning=FALSE, allRef.3}
+###Highest Stress Count (S1 + R4) - 3+ Stressors and Low Reference Count
+
+RefStressDataSelect$HighestStressCount <-RefStressDataSelect$S1 + RefStressDataSelect$R4 #Add Sites with Stress Together
+RefStressDataSelect$HighestStress <- cut(RefStressDataSelect$HighestStressCount, c(-0.5,1.5,20), labels=c('','Highest Stress'))
+
+###High Stress Count (S1 + R3) - 3+ Stressors and Med Reference Count
+
+RefStressDataSelect$HighStressCount <-RefStressDataSelect$S1 + RefStressDataSelect$R3 #Add Sites with Stress Together
+RefStressDataSelect$HighStress <- cut(RefStressDataSelect$HighStressCount, c(-0.5,1.5,20), labels=c('','High Stress'))
+
+###Moderate Stress Count (S2 + R4) - 1 or 2 Stressors and Low Reference Count
+
+RefStressDataSelect$ModStressCount <-RefStressDataSelect$S2 + RefStressDataSelect$R4 #Add Sites with Stress Together
+RefStressDataSelect$ModStress <- cut(RefStressDataSelect$ModStressCount, c(-0.5,1.5,20), labels=c('','Moderate Stress'))
+
+###Moderate2 Stress Count (S2 + R3) - 1 or 2 Stressors and Med Reference Count
+
+RefStressDataSelect$Mod2StressCount <-RefStressDataSelect$S2 + RefStressDataSelect$R3 #Add Sites with Stress Together
+RefStressDataSelect$Mod2Stress <- cut(RefStressDataSelect$Mod2StressCount, c(-0.5,1.5,20), labels=c('','Moderate2 Stress'))
+
+
+###Low Stress Count (S3 + R4) - 0 Stressors but Low Reference Count
+
+RefStressDataSelect$LowStressCount <-RefStressDataSelect$S3 + RefStressDataSelect$R4 #Add Sites with Highest Stress Together
+RefStressDataSelect$LowStress <- cut(RefStressDataSelect$LowStressCount, c(-0.5,1.5,20), labels=c('','zLow Stress'))
+
+###Lowest Stress//Weak Ref Count (S3 + R3) - 0 Stressors and Middle Reference Count, Weak Best Available Site Also...
+
+RefStressDataSelect$LowestStressCount <-RefStressDataSelect$S3 + RefStressDataSelect$R3 #Add Sites with Highest Stress Together
+RefStressDataSelect$LowestStress <- cut(RefStressDataSelect$LowestStressCount, c(-0.5,1.5,20), labels=c('','zLowest Stress'))
+
+
+###Best Ref Sites Count (R1 + S3) - 9+ Ref Critera Met and Zero Stressor Count
+
+RefStressDataSelect$BestRefCount <-RefStressDataSelect$R1 + RefStressDataSelect$S3 #Add Sites with Ref and Stress Together
+RefStressDataSelect$BestRef <- cut(RefStressDataSelect$BestRefCount, c(-0.5,1.5,20), labels=c('','BestRef'))
+
+###Good Ref Sites Count (R2 + S3) - 7-9 Ref Critera Met and Zero Stressor Count
+
+RefStressDataSelect$GoodRefCount <-RefStressDataSelect$R2 + RefStressDataSelect$S3 #Add Sites with Ref and Stress Together
+RefStressDataSelect$GoodRef <- cut(RefStressDataSelect$GoodRefCount, c(-0.5,1.5,20), labels=c('','GoodRef'))
+
+###which stressor is causing the problem with having 11+ ref sites but having one stressor (R1 + S2)
+###Best Ref Sites Count (R1 + S2) - 9+ Ref Critera Met and moderate Stressor Count
+RefStressDataSelect$BestRefModCount <-RefStressDataSelect$R1 + RefStressDataSelect$S2 #Add Sites with Ref and Stress Together
+RefStressDataSelect$BestRefMod <- cut(RefStressDataSelect$BestRefModCount, c(-0.5,1.5,20), labels=c('','BestRefModStress'))
+
+###Best Ref Sites Count (R1 + S1) - 9+ Ref Critera Met and high Stressor Count
+RefStressDataSelect$BestRefModCount2 <-RefStressDataSelect$R1 + RefStressDataSelect$S1 #Add Sites with Ref and Stress Together
+RefStressDataSelect$BestRefMod2 <- cut(RefStressDataSelect$BestRefModCount2, c(-0.5,1.5,20), labels=c('','BestRefModStress2'))
+
+
+###which stressor is causing the problem with having 9+ ref sites but having one stressor (R2 + S2)
+###Good Ref Sites Count (R2 + S2) - 9+ Ref Critera Met and moderate Stressor Count
+RefStressDataSelect$GoodRefModCount <-RefStressDataSelect$R2 + RefStressDataSelect$S2 #Add Sites with Ref and Stress Together
+RefStressDataSelect$GoodRefMod <- cut(RefStressDataSelect$GoodRefModCount, c(-0.5,1.5,20), labels=c('','GoodRefModStress'))
+
+###Good Ref Sites Count (R2 + S1) - 9+ Ref Critera Met and highest Stressor Count
+RefStressDataSelect$GoodRefModCount2 <-RefStressDataSelect$R2 + RefStressDataSelect$S1 #Add Sites with Ref and Stress Together
+RefStressDataSelect$GoodRefMod2 <- cut(RefStressDataSelect$GoodRefModCount2, c(-0.5,1.5,20), labels=c('','GoodRefModStress2'))
+
+#put all stress information in one column 
+RefStressDataSelect$StressAll <- with(RefStressDataSelect, paste0(GoodRefMod,GoodRefMod2,BestRefMod2,BestRefMod,HighestStress,HighStress,ModStress,Mod2Stress,LowStress,LowestStress,BestRef,GoodRef))
+
+datatable(RefStressDataSelect, rownames = F, escape= F, extensions = 'Buttons',
+                options = list(dom = 'Bift', scrollX= TRUE, scrollY = '300px',
+                               pageLength = nrow(RefStressDataSelect), buttons=list('copy','colvis', 'excel')))
+
+#head(RefStressDataSelect)
+```
+
+Next we test the category assignment results by a subset of sites that have VSCI readily available (no WEST VADEP sites or Coastal Plain sites). A description of eight stress categories are found below the graph.
+
+```{r, warning=FALSE, fig.width=10,fig.height=9, allREf.4}
+# Load data with VSCI scores
+RefStressDataPlot <- read_excel('data/RefStressData.xlsx', sheet='VSCI_Check_Final')
+
+
+#qplot(data=RefStressDataSelect,x=StressAll,y=VSCIVCPMI,geom='boxplot') #boxplot to check assumptions
+
+#Make GGPLOT
+###make a another fancy pretty boxplot of all data in ggplot
+pAll <- ggplot(data=RefStressDataPlot,aes(x=StressAll,y=VSCI)) +
+  geom_boxplot(aes(color=StressAll)) +
+  ggtitle('VSCI by RefStress Classification') +
+  labs(x='RefStress Classification',y='VSCI') +
+  theme(plot.title = element_text(color="red", size=14, face="bold.italic"),
+        axis.title.x = element_text(color="black", size=14, face="bold"),
+        legend.position="bottom") +
+  geom_hline(yintercept=60,linetype = "longdash") ##dash line of passing cutoff
+pAll
+```
+
+Reference and stress classification.
+
+* Best Ref (n=728) = Best Ref Sites Count (R1 + S3) - 6 Ref Criteria Met and Zero Stressor Count 
+* Good Ref (n=1153) = Good Ref Sites Count (R2 + S3) - 5 Ref Criteria Met and Zero Stressor Count 
+* GoodRefModStress (n=293) = Good Ref Sites Count (R2 + S2) - 5 Ref Criteria Met but has at least one Stressor
+* Highest Stress (n=140) = Most disturbed sites, Highest Stress Count (S1 + R4) - 3+ Stressors and Low Reference Count
+* Moderate Stress (n=925) = Moderately stress sites, Moderate Stress Count (S2 + R4) - 1 or 2 Stressors and Low Reference Count
+* Moderate2 Stress (n=805) = Moderate2 Stress Count (S2 + R3) - 1 or 2 Stressors and Med Reference Count
+* zLow Stress (n=337) = Low Stress Count (S3 + R4) - 0 Stressors but Low Reference Count
+* zLowest Stress (n=910) = Lowest Stress/Weak Ref Count (S3 + R3) - 0 Stressors and 4 Reference Filters Met
+
+The histogram below showing the final count for each category of stress.
+
+```{r, warning=FALSE, fig.width=10,fig.height=9, subMets.2}
+# basic histogram of filter results by stress
+p <- ggplot(RefStressDataPlot, aes(x=StressAll)) + 
+  geom_histogram(stat="count")
+
+p
+
+```
+
+# Map of Sites by Reference and Stress Classifications
+
+```{r category thresholds}
+RefStressDataSelect_sf <- mutate(RefStressDataSelect, DOlevel = as.factor(case_when(DO > 0 ~ 'HIGHDO'))) %>%
+  st_as_sf(coords = c("LongitudeDD", "LatitudeDD"),  # make spatial layer using these columns
+           remove = F, # dont remove these lat/lon cols from df
+           crs = 4326) 
+
+#TNsummary <- filter(stationSummary_sf, !is.na(medianTN)) 
+#TPsummary <- filter(stationSummary_sf, !is.na(medianTP))
+
+BestRef <- filter(RefStressDataSelect_sf, StressAll == 'BestRef' )
+GoodRef <- filter(RefStressDataSelect_sf, StressAll == 'GoodRef' )
+GoodRefModStress <- filter(RefStressDataSelect_sf, StressAll == 'GoodRefModStress' )
+HighestStress <- filter(RefStressDataSelect_sf, StressAll == 'Highest Stress' )
+ModerateStress <- filter(RefStressDataSelect_sf, StressAll == 'Moderate Stress' )
+ModerateStress2 <- filter(RefStressDataSelect_sf, StressAll == 'Moderate2 Stress' )
+LowStress <- filter(RefStressDataSelect_sf, StressAll == 'zLow Stress' )
+LowestStress <- filter(RefStressDataSelect_sf, StressAll == 'zLowest Stress' )
+#DOtest <- filter(RefStressDataSelect_sf, DOlevel == 'HIGHDO' )
+#mediumTN <- filter(stationSummary_sf,  TNlevel == 'Medium TN')
+#highTN <- filter(stationSummary_sf,  TNlevel == 'High TN')
+#lowTP <- filter(stationSummary_sf,  TPlevel == 'Low TP')
+#mediumTP <- filter(stationSummary_sf,  TPlevel == 'Medium TP')
+#highTP <- filter(stationSummary_sf,  TPlevel == 'High TP')
+```
+
+```{r, out.width = '100%'}
+#https://color-hex.org/color/3481eb to get color choices
+CreateWebMap(maps = c("Topo","Imagery","Hydrography"), collapsed = TRUE, 
+                   options= leafletOptions(zoomControl = TRUE,minZoom = 3, maxZoom = 20,
+                                           preferCanvas = TRUE)) %>%
+  setView(-79.1, 37.7, zoom=7)  %>% 
+  addCircleMarkers(data = BestRef,
+                   color='black', fillColor= '#2E74D3', fillOpacity = 0.5, stroke=0.1, radius = 4,
+                   weight = 2, group="Best Reference Sites",
+                   label = ~StationID, layerId = ~StationID,
+                   popup = leafpop::popupTable(BestRef, zcol=c('StationID'))) %>%
+  addCircleMarkers(data = GoodRef,
+                   color='black', fillColor= '#3aeb34', fillOpacity = 0.5, stroke=0.1, radius = 4,
+                   weight = 2, group="Good Reference Sites",
+                   label = ~StationID, layerId = ~StationID,
+                   popup = leafpop::popupTable(GoodRef, zcol=c('StationID'))) %>%
+  addCircleMarkers(data = GoodRefModStress,
+                   color='black', fillColor= '#7a49a5', fillOpacity = 0.5, stroke=0.1, radius = 4,
+                   weight = 2, group="Good Reference Sites with One Stress",
+                   label = ~StationID, layerId = ~StationID,
+                   popup = leafpop::popupTable(GoodRefModStress, zcol=c('StationID'))) %>%
+  addCircleMarkers(data = HighestStress,
+                   color='black', fillColor= '#f42c40', fillOpacity = 0.5, stroke=0.1, radius = 4,
+                   weight = 2, group="Highest Stress Sites",
+                   label = ~StationID, layerId = ~StationID,
+                   popup = leafpop::popupTable(HighestStress, zcol=c('StationID'))) %>%
+  addCircleMarkers(data = ModerateStress,
+                   color='black', fillColor= '#f4912c', fillOpacity = 0.5, stroke=0.1, radius = 4,
+                   weight = 2, group="Moderate High Stress Sites",
+                   label = ~StationID, layerId = ~StationID,
+                   popup = leafpop::popupTable(ModerateStress, zcol=c('StationID'))) %>%
+  addCircleMarkers(data = ModerateStress2,
+                   color='black', fillColor= '#FAD3AA', fillOpacity = 0.5, stroke=0.1, radius = 4,
+                   weight = 2, group="Moderate Stress Sites (Mod2)",
+                   label = ~StationID, layerId = ~StationID,
+                   popup = leafpop::popupTable(ModerateStress2, zcol=c('StationID'))) %>%
+  addCircleMarkers(data = LowStress,
+                   color='black', fillColor= '#f3f447', fillOpacity = 0.5, stroke=0.1, radius = 4,
+                   weight = 2, group="No Stress No Ref All Fair (Low Stress)",
+                   label = ~StationID, layerId = ~StationID,
+                   popup = leafpop::popupTable(LowStress, zcol=c('StationID'))) %>%
+  addCircleMarkers(data = LowestStress,
+                   color='black', fillColor= '#AAAA31', fillOpacity = 0.5, stroke=0.1, radius = 4,
+                   weight = 2, group="No Stress Some Ref Most Fair (Lowest Stress)",
+                   label = ~StationID, layerId = ~StationID,
+                   popup = leafpop::popupTable(LowestStress, zcol=c('StationID'))) %>%
+  inlmisc::AddHomeButton(raster::extent(-83.89, -74.80, 36.54, 39.98), position = "topleft") %>%
+  addLayersControl(baseGroups=c("Topo","Imagery","Hydrography"),
+                   overlayGroups = c("Best Reference Sites","Good Reference Sites",
+                                     "Good Reference Sites with One Stress","Highest Stress Sites",
+                                     "Moderate High Stress Sites","Moderate Stress Sites (Mod2)",
+                                     "No Stress No Ref All Fair (Low Stress)","No Stress Some Ref Most Fair (Lowest Stress)"),
+                   options=layersControlOptions(collapsed=T),
+                   position='topleft')
+```
+
+# Table of Results
+
+Below is table of reference and stress classification totals by agency, bioregion, and regional office.
+
+```{r, warning=FALSE, summary}
+# https://mikoontz.github.io/data-carpentry-week/lesson_joins.html
+# Load data
+RefStressDataCount <- read_excel('data/RefStressDataFinalWithCoast.xlsx', sheet='RefStressDataWide')
+
+#count all ref/stress data categories
+VA_WVA_Count <- RefStressDataCount %>% count(RefStressCode)
+
+#count just wva ref/stress data categories 
+WVA <- filter(RefStressDataCount, DataSource == 'WVA_BUG' ) %>% count(RefStressCode) 
+
+#count just va ref/stress data categories 
+VA <- filter(RefStressDataCount, DataSource == 'VDEQ_BUG' ) %>% count(RefStressCode) 
+
+#count just bioregion ref/stress data categories 
+VA_MTN <- filter(RefStressDataCount, BioRegion == 'Mountain' ) %>% count(RefStressCode)
+VA_PIED <- filter(RefStressDataCount, BioRegion == 'Piedmont') %>% count(RefStressCode)
+VA_COAST <- filter(RefStressDataCount, BioRegion == 'Coast' ) %>% count(RefStressCode)
+
+#count just region offices ref/stress data categories 
+VA_NRO <- filter(RefStressDataCount, Region == 'NRO' ) %>% count(RefStressCode)
+VA_PRO <- filter(RefStressDataCount, Region == 'PRO' ) %>% count(RefStressCode)
+VA_TRO <- filter(RefStressDataCount, Region == 'TRO' ) %>% count(RefStressCode)
+VA_SWRO <- filter(RefStressDataCount, Region == 'SWRO' ) %>% count(RefStressCode)
+VA_VRO <- filter(RefStressDataCount, Region == 'VRO' ) %>% count(RefStressCode)
+VA_SCRO <- filter(RefStressDataCount, Region == 'SCRO' ) %>% count(RefStressCode)
+VA_WCRO <- filter(RefStressDataCount, Region == 'WCRO' ) %>% count(RefStressCode)
+
+#bullshit join code, ask emma how to clean up!
+Join <- left_join(VA_WVA_Count, WVA, by = "RefStressCode", copy = FALSE, suffix = c("Total", "WVDEQ"))
+Join2 <- left_join(VA, VA_MTN, by = "RefStressCode", copy = FALSE, suffix = c("VDEQ", "Mountain"))          
+Join3 <- left_join(VA_PIED, VA_COAST, by = "RefStressCode", copy = FALSE, suffix = c("Piedmont", "Coast"))  
+Join4 <- left_join(VA_NRO, VA_PRO, by = "RefStressCode", copy = FALSE, suffix = c("NRO", "PRO"))
+Join5 <- right_join(VA_TRO, VA_SWRO, by = "RefStressCode", copy = FALSE, suffix = c("TRO", "SWRO"))
+Join6 <- left_join(VA_VRO, VA_SCRO, by = "RefStressCode", copy = FALSE, suffix = c("VRO", "SCRO"))
+Join7 <- left_join(VA_WCRO, VA_WVA_Count, by = "RefStressCode", copy = FALSE, suffix = c("WCRO", "Total"))
+
+
+JoinAll <- left_join(Join, Join2, by = "RefStressCode") %>%
+    left_join(., Join3, by = "RefStressCode") %>% 
+    left_join(., Join4, by = "RefStressCode") %>% 
+    left_join(., Join5, by = "RefStressCode") %>% 
+    left_join(., Join6, by = "RefStressCode") %>% 
+    left_join(., Join7, by = "RefStressCode") 
+  
+  
+#left_join(x, y, by='Flag') %>%
+#                left_join(., z, by='Flag') 
+
+datatable(JoinAll, rownames = F, escape= F, extensions = 'Buttons',
+                options = list(dom = 'Bift', scrollX= TRUE, scrollY = '300px',
+                               pageLength = nrow(RefStressDataSelect), buttons=list('copy','colvis', 'excel')))
+
+
+```
+# Table of Stress Sites By EcoRegion
+
+Below is table of stress classification totals by ecoregions (VDEQ data only).
+
+
+```{r, message = FALSE, warning=FALSE, StressSummary}
+# Load data
+RefStressDataCount <- read_excel('data/RefStressDataFinalWithCoast.xlsx', sheet='RefStressDataWide')
+
+VARefStressDataCount <- filter(RefStressDataCount, DataSource == "VDEQ_BUG")
+
+VAEcoStressCount <- VARefStressDataCount %>%  
+  group_by(EcoRegion) %>%
+  filter(TotHabStress == "Stress") %>% count(name = 'TotHabStress') %>%
+  left_join(VARefStressDataCount %>%  
+              group_by(EcoRegion) %>%
+              filter(TNStress == "Stress") %>% count(name = 'TNStress') ) %>%
+  left_join(VARefStressDataCount %>%  
+              group_by(EcoRegion) %>%
+              filter(TPStress == "Stress") %>% count(name = 'TPStress') ) %>%
+  left_join(VARefStressDataCount %>%  
+              group_by(EcoRegion) %>%
+              filter(DOStress == "Stress") %>% count(name = 'DOStress') ) %>%
+  left_join(VARefStressDataCount %>%  
+              group_by(EcoRegion) %>%
+              filter(PHStress == "Stress") %>% count(name = 'PHStress') ) %>%
+  left_join(VARefStressDataCount %>%  
+              group_by(EcoRegion) %>%
+              filter(SpCondStress == "Stress") %>% count(name = 'SpCondStress') )
+
+
+VAEcoStressCount[is.na(VAEcoStressCount)] <- 0
+
+
+datatable(VAEcoStressCount, rownames = F, escape= F, extensions = 'Buttons',
+                options = list(dom = 'Bift', scrollX= TRUE, scrollY = '300px',
+                               pageLength = nrow(VAEcoStressCount), buttons=list('copy','colvis', 'excel')))
+
+
+```
+
+
+
+```{r, warning=FALSE, eval = FALSE, allRefLarryVSCO.1}
+# Load data
+RefStressDataVSCI <- read_excel('data/VSCI_Data_Larry.xlsx', sheet='Data')
+
+# No filtering needed on this sheet, but going with "Select" so no recoding
+RefStressDataSelect <- RefStressDataVSCI
+
+# Create Dataframe with Stress, Ref and Fair Labeled
+RefStressDataSelect$TotHabStress <- cut(RefStressDataSelect$TotHab, c(0,120,150,200), labels=c('Stress','Fair','Ref'))
+RefStressDataSelect$TNStress <- cut(RefStressDataSelect$TN, c(0,1,2,100), labels=c('Ref','Fair','Stress'))
+RefStressDataSelect$TPStress <- cut(RefStressDataSelect$TP, c(0,0.02,0.05,100), labels=c('Ref','Fair','Stress'))
+RefStressDataSelect$DOStress <- cut(RefStressDataSelect$DO, c(0,7,8,100), labels=c('Stress','Fair','Ref'))
+RefStressDataSelect$PHStress <- cut(RefStressDataSelect$pH, c(0,6,9,100), labels=c('Fair','Ref','Fair2'))
+RefStressDataSelect$SpCondStress <- cut(RefStressDataSelect$SpCond, c(0,250,500,100000), labels=c('Ref','Fair','Stress'))
+
+
+RefStressDataSelect$CountStress <- rowSums(RefStressDataSelect == 'Stress', na.rm=TRUE) #Counts number of sites with Stress values
+
+RefStressDataSelect$CountRef <- rowSums(RefStressDataSelect == 'Ref', na.rm=TRUE) #Counts number of sites with Ref values
+
+RefStressDataSelect$CountFair1 <- rowSums(RefStressDataSelect == 'Fair', na.rm=TRUE) #Counts number of sites with Fair values
+
+RefStressDataSelect$CountFair2 <- rowSums(RefStressDataSelect == 'Fair2', na.rm=TRUE) #Counts number of sites with Fair values
+
+RefStressDataSelect$CountFair <-RefStressDataSelect$CountFair1 + RefStressDataSelect$CountFair2 #Add Sites with Fair(s) together
+
+RefStressDataSelect <-within(RefStressDataSelect, rm(CountFair1, CountFair2)) #removes interm fair counts from dataframe to be tidy!
+#within(df, rm(x, y))
+
+RefStressDataSelect$CountFilterParms <- RefStressDataSelect$CountRef + RefStressDataSelect$CountStress + RefStressDataSelect$CountFair
+
+
+###Label Stress and Ref Condition
+RefStressDataSelect$StressLevel <- cut(RefStressDataSelect$CountStress, c(-1,-0.5,0.5,2.5,20), labels=c('S4','S3','S2','S1'))
+RefStressDataSelect$RefLevel <- cut(RefStressDataSelect$CountRef, c(0,3,4,5,20), labels=c('R4','R3','R2','R1'))
+
+#Select Stress and Ref Level
+RefStressDataSelect$S1 <- rowSums(RefStressDataSelect == 'S1', na.rm=TRUE) #Counts number of sites with S1 (highest stressor count 3+) 
+RefStressDataSelect$S2 <- rowSums(RefStressDataSelect == 'S2', na.rm=TRUE) #Counts number of sites with S2 (high stressor count 1-2)
+RefStressDataSelect$S3 <- rowSums(RefStressDataSelect == 'S3', na.rm=TRUE) #Counts number of sites with S3 (0 stressor count)
+
+RefStressDataSelect$R1 <- rowSums(RefStressDataSelect == 'R1', na.rm=TRUE) #Counts number of sites with R1 (high ref count All 6)
+RefStressDataSelect$R2 <- rowSums(RefStressDataSelect == 'R2', na.rm=TRUE) #Counts number of sites with R2 (high ref count 5 of 6
+RefStressDataSelect$R3 <- rowSums(RefStressDataSelect == 'R3', na.rm=TRUE) #Counts number of sites with R3 (medium ref count 4)
+RefStressDataSelect$R4 <- rowSums(RefStressDataSelect == 'R4', na.rm=TRUE) #Counts number of sites with R4 (low ref count 0-3)
+
+###Highest Stress Count (S1 + R4) - 3+ Stressors and Low Reference Count
+
+RefStressDataSelect$HighestStressCount <-RefStressDataSelect$S1 + RefStressDataSelect$R4 #Add Sites with Stress Together
+RefStressDataSelect$HighestStress <- cut(RefStressDataSelect$HighestStressCount, c(-0.5,1.5,20), labels=c('','Highest Stress'))
+
+###High Stress Count (S1 + R3) - 3+ Stressors and Med Reference Count
+
+RefStressDataSelect$HighStressCount <-RefStressDataSelect$S1 + RefStressDataSelect$R3 #Add Sites with Stress Together
+RefStressDataSelect$HighStress <- cut(RefStressDataSelect$HighStressCount, c(-0.5,1.5,20), labels=c('','High Stress'))
+
+###Moderate Stress Count (S2 + R4) - 1 or 2 Stressors and Low Reference Count
+
+RefStressDataSelect$ModStressCount <-RefStressDataSelect$S2 + RefStressDataSelect$R4 #Add Sites with Stress Together
+RefStressDataSelect$ModStress <- cut(RefStressDataSelect$ModStressCount, c(-0.5,1.5,20), labels=c('','Moderate Stress'))
+
+###Moderate2 Stress Count (S2 + R3) - 1 or 2 Stressors and Med Reference Count
+
+RefStressDataSelect$Mod2StressCount <-RefStressDataSelect$S2 + RefStressDataSelect$R3 #Add Sites with Stress Together
+RefStressDataSelect$Mod2Stress <- cut(RefStressDataSelect$Mod2StressCount, c(-0.5,1.5,20), labels=c('','Moderate2 Stress'))
+
+
+###Low Stress Count (S3 + R4) - 0 Stressors but Low Reference Count
+
+RefStressDataSelect$LowStressCount <-RefStressDataSelect$S3 + RefStressDataSelect$R4 #Add Sites with Highest Stress Together
+RefStressDataSelect$LowStress <- cut(RefStressDataSelect$LowStressCount, c(-0.5,1.5,20), labels=c('','zLow Stress'))
+
+###Lowest Stress//Weak Ref Count (S3 + R3) - 0 Stressors and Middle Reference Count, Weak Best Available Site Also...
+
+RefStressDataSelect$LowestStressCount <-RefStressDataSelect$S3 + RefStressDataSelect$R3 #Add Sites with Highest Stress Together
+RefStressDataSelect$LowestStress <- cut(RefStressDataSelect$LowestStressCount, c(-0.5,1.5,20), labels=c('','zLowest Stress'))
+
+
+###Best Ref Sites Count (R1 + S3) - 9+ Ref Critera Met and Zero Stressor Count
+
+RefStressDataSelect$BestRefCount <-RefStressDataSelect$R1 + RefStressDataSelect$S3 #Add Sites with Ref and Stress Together
+RefStressDataSelect$BestRef <- cut(RefStressDataSelect$BestRefCount, c(-0.5,1.5,20), labels=c('','BestRef'))
+
+###Good Ref Sites Count (R2 + S3) - 7-9 Ref Critera Met and Zero Stressor Count
+
+RefStressDataSelect$GoodRefCount <-RefStressDataSelect$R2 + RefStressDataSelect$S3 #Add Sites with Ref and Stress Together
+RefStressDataSelect$GoodRef <- cut(RefStressDataSelect$GoodRefCount, c(-0.5,1.5,20), labels=c('','GoodRef'))
+
+###which stressor is causing the problem with having 11+ ref sites but having one stressor (R1 + S2)
+###Best Ref Sites Count (R1 + S2) - 9+ Ref Critera Met and moderate Stressor Count
+RefStressDataSelect$BestRefModCount <-RefStressDataSelect$R1 + RefStressDataSelect$S2 #Add Sites with Ref and Stress Together
+RefStressDataSelect$BestRefMod <- cut(RefStressDataSelect$BestRefModCount, c(-0.5,1.5,20), labels=c('','BestRefModStress'))
+
+###Best Ref Sites Count (R1 + S1) - 9+ Ref Critera Met and high Stressor Count
+RefStressDataSelect$BestRefModCount2 <-RefStressDataSelect$R1 + RefStressDataSelect$S1 #Add Sites with Ref and Stress Together
+RefStressDataSelect$BestRefMod2 <- cut(RefStressDataSelect$BestRefModCount2, c(-0.5,1.5,20), labels=c('','BestRefModStress2'))
+
+
+###which stressor is causing the problem with having 9+ ref sites but having one stressor (R2 + S2)
+###Good Ref Sites Count (R2 + S2) - 9+ Ref Critera Met and moderate Stressor Count
+RefStressDataSelect$GoodRefModCount <-RefStressDataSelect$R2 + RefStressDataSelect$S2 #Add Sites with Ref and Stress Together
+RefStressDataSelect$GoodRefMod <- cut(RefStressDataSelect$GoodRefModCount, c(-0.5,1.5,20), labels=c('','GoodRefModStress'))
+
+###Good Ref Sites Count (R2 + S1) - 9+ Ref Critera Met and highest Stressor Count
+RefStressDataSelect$GoodRefModCount2 <-RefStressDataSelect$R2 + RefStressDataSelect$S1 #Add Sites with Ref and Stress Together
+RefStressDataSelect$GoodRefMod2 <- cut(RefStressDataSelect$GoodRefModCount2, c(-0.5,1.5,20), labels=c('','GoodRefModStress2'))
+
+#put all stress information in one column 
+RefStressDataSelect$StressAll <- with(RefStressDataSelect, paste0(GoodRefMod,GoodRefMod2,BestRefMod2,BestRefMod,HighestStress,HighStress,ModStress,Mod2Stress,LowStress,LowestStress,BestRef,GoodRef))
+
+datatable(RefStressDataSelect, rownames = F, escape= F, extensions = 'Buttons',
+                options = list(dom = 'Bift', scrollX= TRUE, scrollY = '300px',
+                               pageLength = nrow(RefStressDataSelect), buttons=list('copy','colvis', 'excel')))
+
+```
+
