@@ -1,7 +1,7 @@
 # RefStress
 An R markdown file that takes you through the process for finding reference and stress sites
 
-This script was built using R 4.0.2 (Taking Off Again). 
+This script was built using R 4.0.2 (Taking Off Again). And rebuilt under R 4.3.0 (Already Tomorrow) to have markdown run more efficiently (_NewMap).
 
 This tool filters reference and stress sites from Virginia and West Virginia EDAS databases, in this script we cast a "wide net" net on 
 all the data (n=5292). This initial filter looks at 6 stress parameters that were available for the most sites in the database(s). 
